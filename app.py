@@ -1,8 +1,8 @@
-# able to upload pdf & word file v1
+# able to upload pdf & word file v2
 from fpdf import FPDF
 from docx import Document
 from werkzeug.utils import secure_filename
-from flask import Flask, request, render_template, jsonify, send_file
+from flask import Flask, request, render_template, jsonify, send_file, redirect
 import torch
 import os
 import logging
@@ -137,18 +137,59 @@ def format_user_input(user_input):
         formatted_input += "?"
     return formatted_input
 
+# def build_conversation_context(user_input, include_history=True, max_history=3):
+#     formatted_input = format_user_input(user_input)
+    
+#     if not include_history or len(conversation_history) < 2:
+#         return f"User: {formatted_input}\\n### Bot:"
+#     history_pairs = []
+#     relevant_history = conversation_history[-min(len(conversation_history), max_history*2):]
+#     for i in range(0, len(relevant_history), 2):
+#         if i+1 < len(relevant_history):
+#             history_pairs.append(f"User: {relevant_history[i]['text']}\\n### Bot: {relevant_history[i+1]['text']}")
+#     context = "\\n\\n".join(history_pairs)
+#     context += f"\\n\\nUser: {formatted_input}\\n### Bot:"
+
+#     # for i in range(len(relevant_history)):
+#     #     msg = relevant_history[i]
+#     #     if msg["sender"] == "User":
+#     #         context_parts.append(f"User: {msg['text']}")
+#     #     elif msg["sender"] == "Gordon Ramsay":
+#     #         context_parts.append(f"### Bot: {msg['text']}")
+#     #     elif msg["sender"] == "Memory":
+#     #         context_parts.append(f"(Reference context from uploaded material: {msg['text']})")
+        
+#     return context
+
 def build_conversation_context(user_input, include_history=True, max_history=3):
     formatted_input = format_user_input(user_input)
-    if not include_history or len(conversation_history) < 2:
-        return f"User: {formatted_input}\\n### Bot:"
-    history_pairs = []
-    relevant_history = conversation_history[-min(len(conversation_history), max_history*2):]
-    for i in range(0, len(relevant_history), 2):
-        if i+1 < len(relevant_history):
-            history_pairs.append(f"User: {relevant_history[i]['text']}\\n### Bot: {relevant_history[i+1]['text']}")
-    context = "\\n\\n".join(history_pairs)
-    context += f"\\n\\nUser: {formatted_input}\\n### Bot:"
-    return context
+    context_parts = []
+
+    # 添加 Memory 内容（上传文件的记忆）
+    for msg in conversation_history:
+        if msg["sender"] == "Memory":
+            context_parts.append(f"(Reference context from uploaded material: {msg['text']})")
+
+    # 添加最近对话历史（用户+Gordon）
+    if include_history:
+        history_pairs = []
+        relevant_history = [
+            msg for msg in conversation_history if msg["sender"] in ["User", "Gordon Ramsay"]
+        ][-max_history * 2:]
+
+        for i in range(0, len(relevant_history), 2):
+            if i + 1 < len(relevant_history):
+                history_pairs.append(
+                    f"User: {relevant_history[i]['text']}\n### Bot: {relevant_history[i+1]['text']}"
+                )
+
+        context_parts.extend(history_pairs)
+
+    # 当前用户输入
+    context_parts.append(f"User: {formatted_input}\n### Bot:")
+
+    return "\n\n".join(context_parts)
+
 
 def process_response(response_text):
     if "### Bot:" in response_text:
@@ -223,12 +264,30 @@ def generate_response(user_input):
     system_prompt = get_system_prompt(intent)
     full_user_input = f"{style_prefix}\\n\\n{user_input}"
 
+    # history_messages = [{"role": "system", "content": system_prompt}]
+    # for msg in conversation_history:
+    #     history_messages.append({
+    #         "role": "user" if msg["sender"] == "User" else "assistant",
+    #         "content": msg["text"]
+    #     })
+
     history_messages = [{"role": "system", "content": system_prompt}]
-    for msg in conversation_history:
+
+    # ⬇️ 添加 memory_store 的内容（如果有）
+    if memory_store.get("content"):
         history_messages.append({
-            "role": "user" if msg["sender"] == "User" else "assistant",
-            "content": msg["text"]
+            "role": "system",
+            "content": f"( {memory_store['content'][:1500]})"
         })
+
+    # ⬇️ 添加之前的对话历史
+    for msg in conversation_history:
+        if msg["sender"] in ["User", "Gordon Ramsay"]:
+            history_messages.append({
+                "role": "user" if msg["sender"] == "User" else "assistant",
+                "content": msg["text"]
+            })
+
     history_messages.append({"role": "user", "content": full_user_input})
 
     payload = {
@@ -277,6 +336,8 @@ def api_chat():
     conversation_history.append({"sender": "Gordon Ramsay", "text": bot_response})
     return jsonify({"status": "success", "response": bot_response})
 
+memory_store = {}
+
 # upload file
 @app.route("/upload", methods=["POST"])
 def upload_file():
@@ -285,6 +346,7 @@ def upload_file():
     file = request.files["file"]
     if file.filename == "":
         return "No selected file", 400
+
     if allowed_file(file.filename):
         filename = secure_filename(file.filename)
         filepath = os.path.join("uploads", filename)
@@ -296,12 +358,26 @@ def upload_file():
         else:
             text = extract_text_from_docx(filepath)
 
+        # ✅ 存入 memory（内部处理）
+        memory_store["content"] = text
+
         bot_response = generate_response(text)
-        conversation_history.append({"sender": "User", "text": text})
-        conversation_history.append({"sender": "Gordon Ramsay", "text": bot_response})
-        return render_template("chat.html", conversation_history=conversation_history)
+
+        conversation_history.append({
+            "sender": "User",
+            "text": f"[Uploaded file: **{filename}**]"
+        })
+
+        # 添加 Gordon 的回应
+        conversation_history.append({
+            "sender": "Gordon Ramsay",
+            "text": bot_response
+        })
+
+        return redirect("/")
     else:
         return "Invalid file type", 400
+
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)
