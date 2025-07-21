@@ -1,5 +1,5 @@
 # able to upload pdf & word file
-# which chatgpt-like - able to further prompt after send a pdf / word file
+# more clearer UI
 from fpdf import FPDF
 from docx import Document
 from werkzeug.utils import secure_filename
@@ -315,37 +315,79 @@ def generate_response(user_input):
         logger.error(f"Groq request failed: {e}")
         return "Something went wrong in the kitchen!"
 
+# @app.route("/", methods=["GET", "POST"])
+# def chat():
+#     global conversation_history
+#     if request.method == "POST":
+#         user_input = request.form.get("user_input", "").strip()
+#         if user_input:
+#             bot_response = generate_response(user_input)
+#             conversation_history.append({"sender": "User", "text": user_input})
+#             conversation_history.append({"sender": "Gordon Ramsay", "text": bot_response})
+#     return render_template("chat.html", conversation_history=conversation_history, model_exists=model_exists)
+
 @app.route("/", methods=["GET", "POST"])
 def chat():
+    global conversation_history
+
     if request.method == "POST":
-        user_input = request.form.get("user_input", "")
+        user_input = request.form.get("user_input", "").strip()
         file = request.files.get("file")
 
-        # Handle uploaded file (if exists)
+        file_text = ""
+        file_name = ""
+
+        # ✅ 如果上传了文件
         if file and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            filepath = os.path.join("uploads", filename)
+            file_name = secure_filename(file.filename)
+            filepath = os.path.join("uploads", file_name)
             file.save(filepath)
 
-            if filename.endswith(".pdf"):
-                text = extract_text_from_pdf(filepath)
+            # 读取文本
+            if file_name.endswith(".pdf"):
+                file_text = extract_text_from_pdf(filepath)
             else:
-                text = extract_text_from_docx(filepath)
+                file_text = extract_text_from_docx(filepath)
 
-            memory_store["content"] = text
+            # 存入 memory
+            memory_store["content"] = file_text
+            memory_store["filename"] = file_name
+
+            # 显示上传提示
             conversation_history.append({
                 "sender": "Memory",
-                "text": f"📄 Uploaded file: **{filename}**."
+                "text": f"📄 Uploaded file: **{file_name}**."
             })
 
+        # ✅ 用户输入了文字
+        combined_input = ""
+        user_input = request.form.get("user_input", "").strip()
+        file_text = memory_store.get("content", "")
+        file_name = memory_store.get("filename", "")
+
         if user_input:
-            conversation_history.append({"sender": "User", "text": user_input})
-            bot_response = generate_response(user_input)
+            combined_input += user_input
+        if file_text:
+            combined_input += f"\n\n[Reference from uploaded file]\n{file_text}"
+        
+        if combined_input.strip():
+            conversation_history.append({"sender": "User", "text": user_input or f"Uploaded file: {file_name}"})
+            bot_response = generate_response(combined_input.strip())
             conversation_history.append({"sender": "Gordon Ramsay", "text": bot_response})
 
-        return redirect("/")
-    
-    return render_template("chat.html", conversation_history=conversation_history)
+        # if user_input:
+        #     conversation_history.append({"sender": "User", "text": user_input})
+        #     bot_response = generate_response(user_input)
+        #     conversation_history.append({"sender": "Gordon Ramsay", "text": bot_response})
+
+        # ✅ 没有文字输入，只上传了文件，也可以生成回应
+        # elif file_text:
+        #     conversation_history.append({"sender": "User", "text": f"Uploaded file: {file_name}"})
+        #     bot_response = generate_response(file_text)
+        #     conversation_history.append({"sender": "Gordon Ramsay", "text": bot_response})
+
+    return render_template("chat.html", conversation_history=conversation_history, model_exists=model_exists)
+
 
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
@@ -380,14 +422,19 @@ def upload_file():
         else:
             text = extract_text_from_docx(filepath)
 
-        # ✅ 存入 memory（内部处理）
+        # save into memory
         memory_store["content"] = text
+        memory_store["filename"] = filename  # ✅ 保存文件名
 
-        conversation_history.append({
-            "sender": "Memory",
-            "text": f"📄 Uploaded file: **{filename}**."
-        })
-        return redirect("/")
+        # bot_response = generate_response(text)
+
+        # system response
+        # conversation_history.append({
+        #     "sender": "Gordon Ramsay",
+        #     "text": bot_response
+        # })
+
+        return jsonify({"filename": filename})
     else:
         return "Invalid file type", 400
 
