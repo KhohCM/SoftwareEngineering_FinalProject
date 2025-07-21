@@ -11,7 +11,11 @@ First, install all of the dependencies that are required:
 pip install -r requirements.txt
 ```
 
-Once all of the libraries are installed run the app.py:
+Next once all of the libraries are installed drive the google drive link below and download the .bin file and place it under folder named "gpt2-ramsay-finetuned2", which will be resulted in "your_path/gpt2-ramsay-finetuned2/pytorch_model.bin"
+```bash
+drive_link : https://drive.google.com/drive/folders/16f1-3VKEIbSRZlygmE0JUx23hnHPzbSQ?usp=sharing
+```
+Once all of the libraries and the .bin file is installed run the app.py:
 ```bash
 python app.py
 ```
