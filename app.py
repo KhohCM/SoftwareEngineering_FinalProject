@@ -1,4 +1,5 @@
-# able to upload pdf & word file v2
+# able to upload pdf & word file
+# which chatgpt-like - able to further prompt after send a pdf / word file
 from fpdf import FPDF
 from docx import Document
 from werkzeug.utils import secure_filename
@@ -316,14 +317,35 @@ def generate_response(user_input):
 
 @app.route("/", methods=["GET", "POST"])
 def chat():
-    global conversation_history
     if request.method == "POST":
-        user_input = request.form.get("user_input", "").strip()
+        user_input = request.form.get("user_input", "")
+        file = request.files.get("file")
+
+        # Handle uploaded file (if exists)
+        if file and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            filepath = os.path.join("uploads", filename)
+            file.save(filepath)
+
+            if filename.endswith(".pdf"):
+                text = extract_text_from_pdf(filepath)
+            else:
+                text = extract_text_from_docx(filepath)
+
+            memory_store["content"] = text
+            conversation_history.append({
+                "sender": "Memory",
+                "text": f"📄 Uploaded file: **{filename}**."
+            })
+
         if user_input:
-            bot_response = generate_response(user_input)
             conversation_history.append({"sender": "User", "text": user_input})
+            bot_response = generate_response(user_input)
             conversation_history.append({"sender": "Gordon Ramsay", "text": bot_response})
-    return render_template("chat.html", conversation_history=conversation_history, model_exists=model_exists)
+
+        return redirect("/")
+    
+    return render_template("chat.html", conversation_history=conversation_history)
 
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
@@ -361,19 +383,10 @@ def upload_file():
         # ✅ 存入 memory（内部处理）
         memory_store["content"] = text
 
-        bot_response = generate_response(text)
-
         conversation_history.append({
-            "sender": "User",
-            "text": f"[Uploaded file: **{filename}**]"
+            "sender": "Memory",
+            "text": f"📄 Uploaded file: **{filename}**."
         })
-
-        # 添加 Gordon 的回应
-        conversation_history.append({
-            "sender": "Gordon Ramsay",
-            "text": bot_response
-        })
-
         return redirect("/")
     else:
         return "Invalid file type", 400
