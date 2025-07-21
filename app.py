@@ -1,6 +1,3 @@
-# able to upload pdf & word file
-# more clearer UI v2
-
 from fpdf import FPDF
 from docx import Document
 from werkzeug.utils import secure_filename
@@ -14,6 +11,8 @@ import markdown2
 import requests
 import json
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
+from abc import ABC, abstractmethod
+from typing import Type
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -35,26 +34,49 @@ model_path = "gpt2-ramsay-finetuned2"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model, tokenizer, model_exists = None, None, False
 
-# file upload and extract
+# File upload configuration
 UPLOAD_FOLDER = "uploads"
 EXPORT_FOLDER = "exports"
 ALLOWED_EXTENSIONS = {"pdf", "docx"}
 
-
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(EXPORT_FOLDER, exist_ok=True)
 
-def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+# === File Extractor Classes ===
+class FileExtractor(ABC):
+    """Common interface for all file parsers"""
+    def __init__(self, path: str):
+        self._path = path
 
-def extract_text_from_pdf(pdf_path):
-    from PyPDF2 import PdfReader
-    reader = PdfReader(pdf_path)
-    return "\\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+    @abstractmethod
+    def extract_text(self) -> str:
+        """Extract file text content"""
+        raise NotImplementedError
 
-def extract_text_from_docx(docx_path):
-    doc = Document(docx_path)
-    return "\\n".join([para.text for para in doc.paragraphs])
+class PdfExtractor(FileExtractor):
+    def extract_text(self) -> str:
+        from PyPDF2 import PdfReader
+        reader = PdfReader(self._path)
+        return "\n".join((page.extract_text() or "") for page in reader.pages)
+
+class DocxExtractor(FileExtractor):
+    def extract_text(self) -> str:
+        from docx import Document
+        doc = Document(self._path)
+        return "\n".join(p.text for p in doc.paragraphs)
+
+class ExtractorFactory:
+    _registry: dict[str, Type[FileExtractor]] = {
+        ".pdf": PdfExtractor,
+        ".docx": DocxExtractor,
+    }
+
+    @classmethod
+    def get_extractor(cls, path: str) -> FileExtractor:
+        ext = os.path.splitext(path)[1].lower()
+        if ext not in cls._registry:
+            raise ValueError(f"Unsupported file type: {ext}")
+        return cls._registry[ext](path)
 
 def save_to_pdf(filename, ingredients=None, steps=None):
     pdf = FPDF()
@@ -107,8 +129,8 @@ def parse_bot_response_sections(bot_response):
             if len(rest) > 1:
                 steps = [line.strip("0123456789. ").strip() for line in rest[1].strip().split("\\n") if line.strip()]
     return ingredients, steps
-#=====
 
+#=====
 if os.path.exists(model_path):
     try:
         tokenizer = GPT2Tokenizer.from_pretrained(model_path)
@@ -165,7 +187,6 @@ def build_conversation_context(user_input, include_history=True, max_history=3):
     context_parts.append(f"User: {formatted_input}\n### Bot:")
 
     return "\n\n".join(context_parts)
-
 
 def process_response(response_text):
     if "### Bot:" in response_text:
@@ -295,16 +316,14 @@ def chat():
         file_name = ""
 
         # Upload file
-        if file and allowed_file(file.filename):
+        if file and os.path.splitext(file.filename)[1].lower() in ExtractorFactory._registry:
             file_name = secure_filename(file.filename)
             filepath = os.path.join("uploads", file_name)
             file.save(filepath)
 
             # Read File
-            if file_name.endswith(".pdf"):
-                file_text = extract_text_from_pdf(filepath)
-            else:
-                file_text = extract_text_from_docx(filepath)
+            extractor = ExtractorFactory.get_extractor(filepath)
+            file_text = extractor.extract_text()
 
             # Save into memory
             memory_store["content"] = file_text
@@ -333,7 +352,6 @@ def chat():
 
     return render_template("chat.html", conversation_history=conversation_history, model_exists=model_exists)
 
-
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
     global conversation_history
@@ -356,25 +374,22 @@ def upload_file():
     if file.filename == "":
         return "No selected file", 400
 
-    if allowed_file(file.filename):
+    if os.path.splitext(file.filename)[1].lower() in ExtractorFactory._registry:
         filename = secure_filename(file.filename)
         filepath = os.path.join("uploads", filename)
         file.save(filepath)
 
         # Read pdf @ word file
-        if filename.endswith(".pdf"):
-            text = extract_text_from_pdf(filepath)
-        else:
-            text = extract_text_from_docx(filepath)
+        extractor = ExtractorFactory.get_extractor(filepath)
+        text = extractor.extract_text()
 
         # save into memory
         memory_store["content"] = text
-        memory_store["filename"] = filename  # ✅ Save file Name
+        memory_store["filename"] = filename
 
         return jsonify({"filename": filename})
     else:
         return "Invalid file type", 400
-
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)
