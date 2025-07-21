@@ -1,4 +1,6 @@
 # Project Introduction
+1.1 Project Overview
+In this project we have decided to developed an AI chatbot that mimics Gordon Ramsay’s tone and personality, which uses a custom language model combined with the Groq API and responds to user queries about, recipes, cooking methods, ingredients, dish recommendations and Addtionally it also provides culinary guidance in Gordon Ramsay’s style which aims to make cooking interactive and educational for users. Moving on the scope of this project includes apply NLP to interpret user cooking-related questions, and support upload of PDF/DOCX recipe documents for enhanced analysis (RAG: Retrieval Augmented Generation), currently limitations only supports english, no multilingual functionality. Furthermore note that the responses may not fully reflect Gordon Ramsay’s real culinary preferences and no voice interaction which the system lacks text-to-speech capabilities.
 
 
 # User Manual
