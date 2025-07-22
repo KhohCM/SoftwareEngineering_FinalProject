@@ -20,6 +20,6 @@ Once all of the libraries and the .bin file is installed run the app.py:
 python app.py
 ```
 
-After clicking the link to the website, the chatbot should show up on the screen.
+After clicking the link to the website, the chatbot should show up on the screen
 
 
